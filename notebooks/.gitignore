@@ -1,0 +1,8 @@
+# Ignore datasets
+*.csv
+data/
+
+# Ignore large files
+*.zip
+*.parquet
+*.xlsx
