@@ -1,0 +1,32 @@
+# Core data libraries
+pandas==2.0.3
+numpy==1.25.0
+
+# Streamlit for dashboard
+streamlit==1.55.0
+
+# Plotly for charts
+plotly==5.17.0
+
+# Kaleido for Plotly static image export
+kaleido==1.2.0
+
+# Matplotlib & Seaborn for static charts / tables
+matplotlib==3.7.2
+seaborn==0.12.2
+
+# Machine Learning
+scikit-learn==1.3.1
+
+# Network & Graph analysis
+networkx==3.1
+
+# Progress utilities
+tqdm==4.66.1
+
+# Requests for API calls (live flight data)
+requests==2.32.0
+
+# Optional: needed for animated/autorefresh components
+
+streamlit-autorefresh==1.0.1
