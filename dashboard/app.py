@@ -1,220 +1,223 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import sys
 import os
+import time
 
-# Add project root to path
+# ----------------------------
+# Fix project path
+# ----------------------------
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+# ----------------------------
+# Import project modules
+# ----------------------------
 from src.ingest_live_data import fetch_live_flights
 from src.preprocess import FlightPreprocessor
 from src.anomaly_detection import FlightAnomalyDetector
+from src.pattern_discovery import FlightPatternDiscovery
+from src.graph_analysis import FlightGraphAnalyzer
+from src.delay_prediction import FlightDelayPredictor
 
+# ----------------------------
+# Page settings
+# ----------------------------
+st.set_page_config(page_title="Global Flight Analytics", layout="wide")
 
-# ------------------------------------------------
-# PAGE SETTINGS
-# ------------------------------------------------
-
-st.set_page_config(page_title="Flight Analytics Dashboard", layout="wide")
-
-st.title("✈ Real-Time Flight Analytics Dashboard")
-
+st.title("Global Flight Analytics Dashboard")
 st.write(
-"This dashboard shows live aircraft data and simple insights about global flights."
+    "Explore real-time flights around the world. "
+    "Learn how planes move, where the busiest airports are, and which flights might be delayed."
 )
 
-# ------------------------------------------------
-# FETCH DATA
-# ------------------------------------------------
-
-pre = FlightPreprocessor()
-
-st.write("Fetching live flight data...")
-
+# ----------------------------
+# Fetch and preprocess data
+# ----------------------------
+preprocessor = FlightPreprocessor()
 flights = fetch_live_flights()
 
 if flights.empty:
+    st.warning("No live flight data available.")
+    st.stop()
 
-    st.warning("No flight data available right now.")
+data = preprocessor.preprocess(flights)
+data = data.dropna(subset=["latitude", "longitude"])
+data["callsign"] = data["callsign"].fillna("Unknown")
+data["AirlineCode"] = data["callsign"].astype(str).str[:3]
 
-else:
+# ----------------------------
+# ML Pipeline
+# ----------------------------
+detector = FlightAnomalyDetector()
+data = detector.detect(data)
 
-    data = pre.preprocess(flights)
+pattern_model = FlightPatternDiscovery()
+data = pattern_model.discover(data)
 
-    # ------------------------------------------------
-    # BASIC CLEANING
-    # ------------------------------------------------
+graph_model = FlightGraphAnalyzer()
+graph_model.build_graph(data)
 
-    data = data.dropna(subset=["latitude", "longitude"])
+predictor = FlightDelayPredictor()
+predictor.train(data)
+data = predictor.predict(data)
 
-    data["callsign"] = data["callsign"].fillna("Unknown")
+# ----------------------------
+# Sidebar Filters
+# ----------------------------
+st.sidebar.header("Filters")
+airlines = ["All"] + sorted(data["AirlineCode"].unique().tolist())
+selected_airline = st.sidebar.selectbox("Select Airline", airlines)
 
-    # Extract airline code from callsign
-    data["AirlineCode"] = data["callsign"].astype(str).str[:3]
+min_altitude = st.sidebar.slider("Minimum Altitude", 0, int(data["baro_altitude"].max()), 0)
 
-    detector = FlightAnomalyDetector()
+filtered_data = data.copy()
+if selected_airline != "All":
+    filtered_data = filtered_data[filtered_data["AirlineCode"] == selected_airline]
+filtered_data = filtered_data[filtered_data["baro_altitude"] >= min_altitude]
 
-    data = detector.detect(data)
+# ----------------------------
+# Tabs for Story-like Dashboard
+# ----------------------------
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "Overview", "Live Map", "Traffic Heatmap", "Animated Movement", "Insights"
+])
 
-    anomalies = data[data["anomaly"] == -1]
-
+# ----------------------------
+# Tab 1: Overview
+# ----------------------------
+with tab1:
+    st.subheader("Live Flight Summary")
     col1, col2, col3 = st.columns(3)
+    col1.metric("Total Flights", len(filtered_data))
+    col2.metric("Active Airlines", filtered_data["AirlineCode"].nunique())
+    col3.metric("Possible Delays", len(filtered_data[filtered_data["delay_risk"] == 1]))
 
-    col1.metric("Total Flights", len(data))
-    col2.metric("Airlines", data["AirlineCode"].nunique())
-    col3.metric("Anomalous Flights", len(anomalies))
-
-    import plotly.graph_objects as go
-
-    fig = go.Figure()
-
-    # Normal flights
-    normal = data[data["anomaly"] == 1]
-
-    fig.add_trace(
-        go.Scattermapbox(
-            lat=normal["latitude"],
-            lon=normal["longitude"],
-            mode="markers",
-            marker=dict(size=7, color="blue"),
-            text=normal["callsign"],
-            name="Normal Flights"
-        )
-    )
-
-    # Anomalous flights
-    abnormal = data[data["anomaly"] == -1]
-
-    fig.add_trace(
-        go.Scattermapbox(
-            lat=abnormal["latitude"],
-            lon=abnormal["longitude"],
-            mode="markers",
-            marker=dict(size=10, color="red"),
-            text=abnormal["callsign"],
-            name="Anomalous Flights"
-        )
-    )
-
-    fig.update_layout(
-        mapbox_style="open-street-map",
-        mapbox_zoom=1,
-        mapbox_center={"lat":20, "lon":0},
-        height=600
-    )
-
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.subheader("Detected Flight Anomalies")
-
-    st.dataframe(
-        anomalies[[
-            "callsign",
-            "velocity",
-            "baro_altitude",
-            "vertical_rate"
-        ]]
-    )
-
-    # ------------------------------------------------
-    # OVERVIEW METRICS
-    # ------------------------------------------------
-
-    st.subheader("Live Flight Overview")
-
-    col1, col2 = st.columns(2)
-
-    col1.metric("Total Flights Detected", len(data))
-    col2.metric("Unique Airline Codes", data["AirlineCode"].nunique())
-
-    # ------------------------------------------------
-    # CHART 1 : TOP AIRLINES
-    # ------------------------------------------------
-
-    st.subheader("Top Airlines Currently Flying")
-
-    airline_counts = (
-        data["AirlineCode"]
-        .value_counts()
-        .head(10)
-        .reset_index()
-    )
-
-    airline_counts.columns = ["Airline Code", "Number of Flights"]
-
-    fig_airlines = px.bar(
+    st.write("Top Airlines in the sky right now:")
+    airline_counts = filtered_data["AirlineCode"].value_counts().head(10).reset_index()
+    airline_counts.columns = ["Airline", "Flights"]
+    fig_airline = px.bar(
         airline_counts,
-        x="Airline Code",
-        y="Number of Flights",
-        title="Top 10 Airlines by Number of Flights",
-        text="Number of Flights",
-        color="Number of Flights",
-        color_continuous_scale=["#4CAF50", "#F44336"]
+        x="Airline",
+        y="Flights",
+        text="Flights",
+        color="Flights",
+        color_continuous_scale=px.colors.sequential.Viridis,
     )
+    fig_airline.update_layout(xaxis_title="Airline", yaxis_title="Number of Flights")
+    st.plotly_chart(fig_airline, use_container_width=True)
 
-    fig_airlines.update_layout(
-        xaxis_title="Airline Code",
-        yaxis_title="Number of Flights"
-    )
-
-    st.plotly_chart(fig_airlines, use_container_width=True)
-
-    st.info(
-        "Each bar shows how many aircraft from each airline are currently flying. "
-        "Airline codes are derived from the first 3 letters of the flight callsign."
-    )
-
-    # ------------------------------------------------
-    # CHART 2 : ALTITUDE VS VELOCITY
-    # ------------------------------------------------
-
-    st.subheader("Aircraft Speed vs Altitude")
-
-    fig_alt = px.scatter(
-        data,
-        x="baro_altitude",
-        y="velocity",
-        color="on_ground",
-        hover_data=["callsign", "AirlineCode"],
-        title="Relationship Between Aircraft Altitude and Speed"
-    )
-
-    fig_alt.update_layout(
-        xaxis_title="Altitude (meters)",
-        yaxis_title="Velocity (m/s)"
-    )
-
-    st.plotly_chart(fig_alt, use_container_width=True)
-
-    st.info(
-        "Each point represents an aircraft. Blue points indicate flights in the air, "
-        "while red points represent aircraft on the ground."
-    )
-
-    # ------------------------------------------------
-    # CHART 3 : LIVE FLIGHT MAP
-    # ------------------------------------------------
-
-    st.subheader("Live Aircraft Locations Around the World")
+# ----------------------------
+# Tab 2: Live Map
+# ----------------------------
+with tab2:
+    st.subheader("Aircraft Live Positions")
+    st.write("See where planes are flying right now. Color shows altitude, size shows speed.")
 
     fig_map = px.scatter_mapbox(
-        data,
+        filtered_data,
         lat="latitude",
         lon="longitude",
         hover_name="callsign",
-        hover_data=["AirlineCode"],
+        hover_data={"AirlineCode": True, "velocity": True, "baro_altitude": True},
+        color="baro_altitude",
+        size="velocity",
+        size_max=15,
+        color_continuous_scale=px.colors.sequential.Plasma,
         zoom=1,
-        height=600
+        height=600,
     )
-
-    fig_map.update_layout(
-        mapbox_style="open-street-map",
-        title="Global Aircraft Positions"
-    )
-
+    fig_map.update_layout(mapbox_style="carto-positron", margin={"r":0,"t":0,"l":0,"b":0})
     st.plotly_chart(fig_map, use_container_width=True)
 
-    st.info(
-        "Hover over a point on the map to see the flight number and airline code."
+# ----------------------------
+# Tab 3: Traffic Heatmap
+# ----------------------------
+with tab3:
+    st.subheader("Flight Traffic Heatmap")
+    st.write("Bright areas have more flights. Speed affects intensity.")
+
+    fig_heat = px.density_mapbox(
+        filtered_data,
+        lat="latitude",
+        lon="longitude",
+        z="velocity",
+        radius=15,
+        zoom=1,
+        mapbox_style="carto-positron",
+        color_continuous_scale=px.colors.sequential.Rainbow,
+        title="Flight Traffic Intensity"
     )
+    st.plotly_chart(fig_heat, use_container_width=True)
+
+# ----------------------------
+# Tab 4: Animated Movement
+# ----------------------------
+with tab4:
+    st.subheader("Animated Aircraft Movement")
+    st.write("Watch planes move across the world over time.")
+
+    anim_data = filtered_data.copy()
+    anim_data["frame"] = anim_data.index % 20
+
+    fig_anim = px.scatter_geo(
+        anim_data,
+        lat="latitude",
+        lon="longitude",
+        hover_name="callsign",
+        size="velocity",
+        color="baro_altitude",
+        animation_frame="frame",
+        color_continuous_scale=px.colors.sequential.Rainbow,
+        size_max=15,
+        projection="natural earth",
+        title="Aircraft Movement Animation"
+    )
+    fig_anim.update_layout(geo=dict(showland=True, landcolor="rgb(240,240,240)", oceancolor="lightblue"))
+    st.plotly_chart(fig_anim, use_container_width=True)
+
+# ----------------------------
+# Tab 5: Insights
+# ----------------------------
+with tab5:
+    st.subheader("Insights and Observations")
+    st.write("• Most aircraft cruise between 9000–12000 meters altitude.")
+    st.write("• Faster aircraft usually operate at higher altitudes.")
+    st.write("• Abnormal flights may indicate unusual behaviour.")
+
+    st.write("Busiest Airports right now:")
+    airport_df = graph_model.busiest_airports()
+    fig_airports = px.bar(
+        airport_df,
+        x="Airport",
+        y="Flights",
+        text="Flights",
+        color="Flights",
+        color_continuous_scale=px.colors.sequential.Plasma
+    )
+    st.plotly_chart(fig_airports, use_container_width=True)
+
+    st.write("Flight Delay Risk Distribution:")
+    delay_counts = filtered_data["delay_risk"].value_counts().reset_index()
+    delay_counts.columns = ["Status", "Flights"]
+    delay_counts["Status"] = delay_counts["Status"].map({0: "On Time", 1: "Possible Delay"})
+    fig_delay = px.pie(
+        delay_counts,
+        names="Status",
+        values="Flights",
+        color_discrete_sequence=px.colors.sequential.Rainbow
+    )
+    st.plotly_chart(fig_delay)
+
+    st.write("Detected Abnormal Flights:")
+    anomalies = filtered_data[filtered_data["anomaly"] == -1]
+    st.dataframe(anomalies[["callsign", "velocity", "baro_altitude", "vertical_rate"]])
+
+# ----------------------------
+# Auto-refresh every 60 seconds
+# ----------------------------
+# Auto-refresh every 60 seconds
+st.sidebar.write("Auto refresh every 60 seconds")
+from streamlit_autorefresh import st_autorefresh
+st_autorefresh(interval=60*1000, key="flight_autorefresh")
